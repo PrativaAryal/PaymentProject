@@ -1,0 +1,12 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "John Doe",
+      "mail": "john@example.com",
+      "mobile_number": "9800000000",
+      "password": "123456"
+    }
+  ],
+  "otp": []
+}

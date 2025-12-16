@@ -1,0 +1,532 @@
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Modal, Box, Typography, Divider } from "@mui/material";
+import RoundedButton from "component/Button/Button";
+import ErrorBar from "component/Snackbar/ErrorSnackbar";
+import { useUnitPurchasePaymentInitiate } from "services/UnitPurchase/UnitPurchaseServices";
+
+import IPS from "../../assets/ips.svg";
+import eSewas from "../../assets/eSewa.svg";
+import khalti from "../../assets/Khalti Logo Final.svg";
+
+interface PaymentProps {
+  open;
+  onClose;
+  selectedRows?;
+  SIPInstallmentList?;
+  unitPurchaseId?;
+  purpose: "UP" | "SIP" | "SIP_PAYMENT";
+  unitPurchaseAmount?;
+}
+
+const PaymentPopup = ({
+  open,
+  onClose,
+  selectedRows,
+  SIPInstallmentList,
+  unitPurchaseId,
+  purpose,
+  unitPurchaseAmount,
+}: // purpose = "UP",
+PaymentProps) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const eSewaBaseURL = import.meta.env.VITE_ESEWA_URL;
+
+  const [errorSnackbar, setErrorSnackbar] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [verificationData, setVerificationData] = useState<{
+    pidx: string;
+    transaction_id: string;
+    vendor: string;
+    amount: number;
+    status: string;
+  } | null>(null);
+
+  const { mutate: purchaseUnitsPaymentInitiate, isPending } =
+    useUnitPurchasePaymentInitiate();
+
+  const style = {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: { xs: 300, sm: 300, md: 400 },
+    bgcolor: "background.paper",
+    borderRadius: "8px",
+    boxShadow: 24,
+    p: { xs: 1.5, sm: 2, md: 4 },
+  };
+
+  const paymentMethods = [
+    { name: "Khalti", image: khalti },
+    { name: "eSewa", image: eSewas },
+    { name: "Connect IPS", image: IPS },
+  ];
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const pidx = params.get("pidx");
+    const transaction_id = params.get("transaction_id");
+    const amount = params.get("amount");
+    const status = params.get("status");
+    const vendor = params.get("vendor") || "Khalti";
+
+    if (pidx && status === "Completed" && amount) {
+      setVerificationData({
+        pidx,
+        transaction_id: transaction_id || "",
+        amount: parseFloat(amount),
+        status,
+        vendor,
+      });
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location, navigate]);
+
+  if (pidx && status === "Completed" && amount) {
+    setVerificationData({
+      pidx,
+      transaction_id: transaction_id ||"",
+      amount: parseFloat(amount),
+      status,
+      vendor,
+    });
+    navigate(location.pathname, { replace: true});
+  }
+const handlePaymentMethodSelect = (method) => {
+  setSelectedPaymentMethod(method);
+}
+
+const handleKhaltiPayment = (paymentUrl: string) => {
+  const returnUrl = `${window.location.origin}/payment-status`;
+  const url = new URL(paymenturl);
+
+  url.searchParams.set("return_url, retun")
+}
+
+  const handlePaymentMethodSelect = (method) => {
+    setSelectedPaymentMethod(method);
+  };
+
+  const handleKhaltiPayment = (paymentUrl: string) => {
+    const returnUrl = `${window.location.origin}/payment-status`;
+    const url = new URL(paymentUrl);
+
+    url.searchParams.set("return_url", returnUrl);
+
+    window.location.href = url.toString();
+  };
+
+  const handleContinue = async () => {
+    // if (!selectedPaymentMethod || !unitPurchaseId) {
+    //   return;
+    // }
+    setIsProcessing(true);
+
+    localStorage.setItem(
+      "paymentContext",
+      JSON.stringify({
+        method: selectedPaymentMethod,
+        purpose: purpose,
+        amount: (selectedRows ?? []).reduce(
+          (total, row) => total + (Number(row?.amount) || 0),
+          0
+        ),
+        timestamp: new Date().toISOString(),
+      })
+    );
+    try {
+      await purchaseUnitsPaymentInitiate(
+        {
+          items: unitPurchaseId ? unitPurchaseId : SIPInstallmentList,
+          vendor: selectedPaymentMethod,
+          purpose,
+        },
+        {
+          onSuccess: (response) => {
+            if (!response) {
+              setIsProcessing(false);
+              return;
+            }
+            if (selectedPaymentMethod === "eSewa") {
+              const esewaData = response;
+
+              if (!esewaData) {
+                setIsProcessing(false);
+                return;
+              }
+
+              const requiredFields = [
+                "amount",
+                "tax_amount",
+                "total_amount",
+                "transaction_uuid",
+                "product_code",
+                "product_service_charge",
+                "product_delivery_charge",
+                "success_url",
+                "failure_url",
+                "signed_field_names",
+                "signature",
+              ];
+              if (esewaData.amount)
+                esewaData.amount = Number(esewaData.amount).toFixed(2);
+
+              if (esewaData.total_amount)
+                esewaData.total_amount = Number(esewaData.total_amount).toFixed(
+                  2
+                );
+              const missingFields = requiredFields.filter(
+                (field) =>
+                  esewaData[field] === undefined || esewaData[field] === null
+              );
+
+              if (missingFields.length > 0) {
+                setIsProcessing(false);
+                return;
+              }
+
+              // Create and submit the form
+              const form = document.createElement("form");
+              form.method = "POST";
+              form.action = `${eSewaBaseURL}`;
+              form.style.display = "none"; // Hide the form
+
+              // esewaData["success_url"] =
+              //   "http://localhost:4002/payment-success";
+              // esewaData["failure_url"] =
+              //   "http://localhost:4002/payment-failure";
+
+              // In your eSewa form submission code:
+              esewaData[
+                "success_url"
+              ] = `${window.location.origin}/payment-status/`;
+              esewaData[
+                "failure_url"
+              ] = `${window.location.origin}/payment-status/`;
+
+              // Add all required fields to the form
+              requiredFields.forEach((field) => {
+                const input = document.createElement("input");
+                input.type = "hidden";
+                input.name = field;
+                if (
+                  field === "amount" ||
+                  field === "tax_amount" ||
+                  field === "total_amount"
+                ) {
+                  input.value = Number(esewaData[field]).toLocaleString(
+                    undefined,
+                    {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    }
+                  );
+                }
+
+                input.value = esewaData[field];
+                form.appendChild(input);
+              });
+
+              // Add a submit button (though we'll programmatically submit)
+              const submitButton = document.createElement("input");
+              submitButton.type = "submit";
+              form.appendChild(submitButton);
+
+              document.body.appendChild(form);
+              form.submit();
+
+              // Remove the form after submission (cleanup)
+              setTimeout(() => {
+                document.body.removeChild(form);
+              }, 1000);
+            } else if (selectedPaymentMethod === "Khalti") {
+              if (response?.payment_url) {
+                // window.location.href = response.payment_url;
+                handleKhaltiPayment(response.payment_url);
+              } else {
+                setIsProcessing(false);
+              }
+            } else if (selectedPaymentMethod === "IME Pay") {
+              if (response?.payment_url) {
+                // Create form for IME Pay submission
+                const form = document.createElement("form");
+                form.method = "POST";
+                form.action = response.payment_url;
+                form.style.display = "none";
+
+                // Get required fields from response
+                const requiredFields = [
+                  "TokenId",
+                  "MerchantCode",
+                  "RefId",
+                  "TranAmount",
+                  "Method",
+                  "RespUrl",
+                  "CancelUrl",
+                ];
+
+                // Add all required fields to the form
+                requiredFields.forEach((field) => {
+                  if (response[field] !== undefined) {
+                    const input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = field;
+                    input.value = response[field];
+                    form.appendChild(input);
+                  }
+                });
+
+                // Add optional fields if they exist
+                const optionalFields = [
+                  "ProductId",
+                  "ProductName",
+                  "Remarks",
+                  "TotalAmount",
+                ];
+
+                optionalFields.forEach((field) => {
+                  if (response[field]) {
+                    const input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = field;
+                    input.value = response[field];
+                    form.appendChild(input);
+                  }
+                });
+
+                document.body.appendChild(form);
+                form.submit();
+
+                // Clean up after submission
+                setTimeout(() => {
+                  document.body.removeChild(form);
+                }, 1000);
+              } else {
+                setIsProcessing(false);
+              }
+            } else if (selectedPaymentMethod === "Connect IPS") {
+              const responseData = response;
+
+              if (responseData?.INITIATE_URL) {
+                const form = document.createElement("form");
+                form.method = "POST";
+                form.action = responseData.INITIATE_URL;
+                form.style.display = "none";
+
+                responseData[
+                  "success_url"
+                ] = `${window.location.origin}/payment-status/`;
+                responseData[
+                  "failure_url"
+                ] = `${window.location.origin}/payment-status/`;
+
+                const requiredParams = [
+                  "MERCHANTID",
+                  "APPID",
+                  "APPNAME",
+                  "TXNID",
+                  "TXNDATE",
+                  "TXNCRNCY",
+                  "TXNAMT",
+                  "REFERENCEID",
+                  "REMARKS",
+                  "PARTICULARS",
+                  "TOKEN",
+                  "success_url",
+                  "failure_url",
+                ];
+
+                requiredParams.forEach((param) => {
+                  if (responseData[param] !== undefined) {
+                    const input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = param;
+                    input.value = responseData[param];
+                    form.appendChild(input);
+                  }
+                });
+
+                document.body.appendChild(form);
+                form.submit();
+              } else {
+                setIsProcessing(false);
+              }
+            }
+          },
+          onError: (error) => {
+            setIsProcessing(false);
+            if (axios.isAxiosError(error) && error.response) {
+              setErrorMessage(
+                error.response.data.responseData?.details
+                  ? error.response.data.responseData?.details
+                  : "Error on Payment Processing"
+              );
+            }
+            setErrorSnackbar(true);
+          },
+        }
+      );
+    } catch (error) {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <>
+      <ErrorBar
+        snackbarOpen={errorSnackbar}
+        setSnackbarOpen={setErrorSnackbar}
+        message={errorMessage}
+      />
+      <Modal
+        open={open}
+        onClose={onClose}
+        aria-labelledby="modal-modal-title"
+        aria-describedby="modal-modal-description"
+      >
+        <Box sx={style}>
+          {verificationData ? (
+            <Box sx={{ textAlign: "center", p: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Payment Verification
+              </Typography>
+              <Typography variant="body1" gutterBottom>
+                Amount: NPR {verificationData.amount.toFixed(2)}
+              </Typography>
+              <Typography variant="body2" gutterBottom>
+                Payment ID: {verificationData.pidx}
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <Typography id="modal-modal-title" variant="h6" component="h2">
+                Select Payment Method
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: {
+                    xs: 1,
+                    sm: 1,
+                    md: 2,
+                  },
+                  mt: 2,
+                }}
+              >
+                {paymentMethods.map((method) => (
+                  <Box
+                    key={method.name}
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      cursor: "pointer",
+                      width: "100%",
+                      height: { xs: 100, sm: 100, md: 120 },
+                      bgcolor:
+                        selectedPaymentMethod === method.name
+                          ? "#D6EAF8"
+                          : "#F2F0F4",
+                      borderRadius: 5,
+                      p: { xs: 0, sm: 0, md: 1 },
+                    }}
+                    onClick={() => handlePaymentMethodSelect(method.name)}
+                  >
+                    <Box
+                      sx={{
+                        width: 60,
+                        height: 60,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        mt: 0,
+                        p: { xs: 1, sm: 1, md: 1 },
+                      }}
+                    >
+                      <img
+                        src={method.image}
+                        alt={method.name}
+                        loading="lazy"
+                        style={{
+                          maxWidth: "100%",
+                          maxHeight: "100%",
+                          objectFit: "contain",
+                        }}
+                      />
+                    </Box>
+                    <Typography sx={{ mt: 1 }}>{method.name}</Typography>
+                  </Box>
+                ))}
+              </Box>
+              <Box sx={{ mt: 2 }}>
+                <Divider />
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    m: 2,
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      fontWeight: 500,
+                      fontSize: "14px",
+                    }}
+                  >
+                    Total Payment Amount
+                  </Typography>
+
+                  <Typography
+                    sx={{
+                      fontWeight: 500,
+                      fontSize: "14px",
+                    }}
+                  >
+                    NPR {""}
+                    {selectedRows?.length > 0
+                      ? (selectedRows ?? [])
+                          .reduce(
+                            (total, row) =>
+                              total + (Number(row?.installment_amount) || 0),
+                            0
+                          )
+                          .toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })
+                      : unitPurchaseAmount?.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <RoundedButton
+                title1={
+                  isProcessing
+                    ? "Processing..."
+                    : selectedPaymentMethod
+                    ? `Continue with ${selectedPaymentMethod}`
+                    : "Select a Payment Method to Continue"
+                }
+                onClick1={handleContinue}
+                disable={!selectedPaymentMethod || isPending}
+                loading={isPending}
+              />
+            </>
+          )}
+        </Box>
+      </Modal>
+    </>
+  );
+};
+
+export default PaymentPopup;
